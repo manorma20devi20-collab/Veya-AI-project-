@@ -1,5 +1,4 @@
 import os
-import json
 import uuid
 import sqlite3
 import hashlib
@@ -8,21 +7,51 @@ import time
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, request, jsonify, make_response, render_template_string
+from flask import (
+    Flask,
+    request,
+    jsonify,
+    make_response,
+    render_template_string,
+)
 from flask_cors import CORS
 
 
 # ============================================================
-# VEYA
-# Multi-provider AI platform
+# VEYA V15
+# Dynamic Multi-Provider AI + 5 Premium Agent Slots / Provider
+#
+# Providers:
+# OpenAI
+# Google
+# Anthropic
+# xAI
+# DeepSeek
+# Mistral
+# NVIDIA
+# Microsoft
+# Meta
+# Groq
+#
+# IMPORTANT:
+# - Models are discovered live.
+# - No fake model IDs are required.
+# - Ultra exposes up to 5 premium model/agent slots per provider.
+# - If a provider exposes fewer than 5 eligible models,
+#   Veya does NOT invent fake models.
 # ============================================================
 
+
 APP_NAME = "Veya"
-VERSION = "13.0"
+VERSION = "15.0"
 
 PORT = int(os.getenv("PORT", "10000"))
 DB_PATH = os.getenv("DATABASE_PATH", "veya.db")
-SECRET_KEY = os.getenv("SECRET_KEY", "change-this-in-production")
+
+SECRET_KEY = (
+    os.getenv("SECRET_KEY", "").strip()
+    or os.urandom(32).hex()
+)
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = SECRET_KEY
@@ -46,6 +75,7 @@ PLANS = {
         ],
         "frontier": False,
         "model_picker": False,
+        "premium_slots_per_provider": 1,
     },
 
     "core": {
@@ -60,6 +90,7 @@ PLANS = {
         ],
         "frontier": True,
         "model_picker": True,
+        "premium_slots_per_provider": 3,
     },
 
     "all_ai": {
@@ -81,6 +112,7 @@ PLANS = {
         ],
         "frontier": True,
         "model_picker": True,
+        "premium_slots_per_provider": 5,
     },
 
     "ultra": {
@@ -102,28 +134,45 @@ PLANS = {
         ],
         "frontier": True,
         "model_picker": True,
+        "premium_slots_per_provider": 5,
     },
 }
 
 
 # ============================================================
 # API KEYS
-#
-# NEVER put actual API keys directly into this file.
-# Put them into Render Environment Variables.
 # ============================================================
 
 API_KEYS = {
-    "openai": os.getenv("OPENAI_API_KEY", "").strip(),
-    "anthropic": os.getenv("ANTHROPIC_API_KEY", "").strip(),
-    "google": os.getenv("GOOGLE_API_KEY", "").strip(),
-    "xai": os.getenv("XAI_API_KEY", "").strip(),
-    "deepseek": os.getenv("DEEPSEEK_API_KEY", "").strip(),
-    "mistral": os.getenv("MISTRAL_API_KEY", "").strip(),
-    "nvidia": os.getenv("NVIDIA_API_KEY", "").strip(),
-    "microsoft": os.getenv("MICROSOFT_API_KEY", "").strip(),
-    "meta": os.getenv("META_API_KEY", "").strip(),
-    "groq": os.getenv("GROQ_API_KEY", "").strip(),
+    "openai":
+        os.getenv("OPENAI_API_KEY", "").strip(),
+
+    "anthropic":
+        os.getenv("ANTHROPIC_API_KEY", "").strip(),
+
+    "google":
+        os.getenv("GOOGLE_API_KEY", "").strip(),
+
+    "xai":
+        os.getenv("XAI_API_KEY", "").strip(),
+
+    "deepseek":
+        os.getenv("DEEPSEEK_API_KEY", "").strip(),
+
+    "mistral":
+        os.getenv("MISTRAL_API_KEY", "").strip(),
+
+    "nvidia":
+        os.getenv("NVIDIA_API_KEY", "").strip(),
+
+    "microsoft":
+        os.getenv("MICROSOFT_API_KEY", "").strip(),
+
+    "meta":
+        os.getenv("META_API_KEY", "").strip(),
+
+    "groq":
+        os.getenv("GROQ_API_KEY", "").strip(),
 }
 
 
@@ -132,67 +181,76 @@ API_KEYS = {
 # ============================================================
 
 BASE_URLS = {
-    "openai": os.getenv(
-        "OPENAI_BASE_URL",
-        "https://api.openai.com/v1",
-    ),
+    "openai":
+        os.getenv(
+            "OPENAI_BASE_URL",
+            "https://api.openai.com/v1",
+        ).strip(),
 
-    "anthropic": os.getenv(
-        "ANTHROPIC_BASE_URL",
-        "https://api.anthropic.com",
-    ),
+    "anthropic":
+        os.getenv(
+            "ANTHROPIC_BASE_URL",
+            "https://api.anthropic.com",
+        ).strip(),
 
-    "google": os.getenv(
-        "GOOGLE_BASE_URL",
-        "https://generativelanguage.googleapis.com/v1beta",
-    ),
+    "google":
+        os.getenv(
+            "GOOGLE_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta",
+        ).strip(),
 
-    "xai": os.getenv(
-        "XAI_BASE_URL",
-        "https://api.x.ai/v1",
-    ),
+    "xai":
+        os.getenv(
+            "XAI_BASE_URL",
+            "https://api.x.ai/v1",
+        ).strip(),
 
-    "deepseek": os.getenv(
-        "DEEPSEEK_BASE_URL",
-        "https://api.deepseek.com",
-    ),
+    "deepseek":
+        os.getenv(
+            "DEEPSEEK_BASE_URL",
+            "https://api.deepseek.com",
+        ).strip(),
 
-    "mistral": os.getenv(
-        "MISTRAL_BASE_URL",
-        "https://api.mistral.ai/v1",
-    ),
+    "mistral":
+        os.getenv(
+            "MISTRAL_BASE_URL",
+            "https://api.mistral.ai/v1",
+        ).strip(),
 
-    "nvidia": os.getenv(
-        "NVIDIA_BASE_URL",
-        "https://integrate.api.nvidia.com/v1",
-    ),
+    "nvidia":
+        os.getenv(
+            "NVIDIA_BASE_URL",
+            "https://integrate.api.nvidia.com/v1",
+        ).strip(),
 
-    "microsoft": os.getenv(
-        "MICROSOFT_BASE_URL",
-        "",
-    ),
+    "microsoft":
+        os.getenv(
+            "MICROSOFT_BASE_URL",
+            "",
+        ).strip(),
 
-    "meta": os.getenv(
-        "META_BASE_URL",
-        "",
-    ),
+    "meta":
+        os.getenv(
+            "META_BASE_URL",
+            "",
+        ).strip(),
 
-    "groq": os.getenv(
-        "GROQ_BASE_URL",
-        "https://api.groq.com/openai/v1",
-    ),
+    "groq":
+        os.getenv(
+            "GROQ_BASE_URL",
+            "https://api.groq.com/openai/v1",
+        ).strip(),
 }
 
 
 # ============================================================
-# OPTIONAL MODEL OVERRIDES
+# OPTIONAL EXPLICIT MODEL LISTS
 #
-# You can set:
+# Example:
 #
-# OPENAI_MODELS=model1,model2
-# GROQ_MODELS=model1,model2
+# OPENAI_MODELS=gpt-6-astra,gpt-6.1-sol
 #
-# If not provided, Veya attempts model discovery.
+# But live discovery always wins when available.
 # ============================================================
 
 def env_list(name):
@@ -209,15 +267,16 @@ def env_list(name):
 
 
 MODEL_OVERRIDES = {
-    provider: env_list(
-        f"{provider.upper()}_MODELS"
-    )
+    provider:
+        env_list(
+            f"{provider.upper()}_MODELS"
+        )
     for provider in API_KEYS
 }
 
 
 # ============================================================
-# MODEL DISCOVERY CACHE
+# CACHE
 # ============================================================
 
 MODEL_CACHE = {}
@@ -238,7 +297,10 @@ def cache_get(provider):
 
     timestamp, models = item
 
-    if time.time() - timestamp > MODEL_CACHE_SECONDS:
+    if (
+        time.time() - timestamp
+        > MODEL_CACHE_SECONDS
+    ):
         return None
 
     return models
@@ -251,19 +313,26 @@ def cache_set(provider, models):
     )
 
 
+def cache_clear(provider=None):
+    if provider:
+        MODEL_CACHE.pop(provider, None)
+    else:
+        MODEL_CACHE.clear()
+
+
 # ============================================================
 # DATABASE
 # ============================================================
 
 def db():
-    conn = sqlite3.connect(
+    connection = sqlite3.connect(
         DB_PATH,
         timeout=30,
     )
 
-    conn.row_factory = sqlite3.Row
+    connection.row_factory = sqlite3.Row
 
-    return conn
+    return connection
 
 
 def utc_now():
@@ -273,9 +342,9 @@ def utc_now():
 
 
 def init_db():
-    conn = db()
+    connection = db()
 
-    conn.executescript(
+    connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
@@ -300,6 +369,7 @@ def init_db():
             content TEXT NOT NULL,
             provider TEXT,
             model TEXT,
+            agent_role TEXT,
             created_at TEXT NOT NULL
         );
 
@@ -308,6 +378,7 @@ def init_db():
             user_id TEXT NOT NULL,
             provider TEXT,
             model TEXT,
+            agent_role TEXT,
             input_tokens INTEGER DEFAULT 0,
             output_tokens INTEGER DEFAULT 0,
             estimated_cost_usd REAL DEFAULT 0,
@@ -316,8 +387,8 @@ def init_db():
         """
     )
 
-    conn.commit()
-    conn.close()
+    connection.commit()
+    connection.close()
 
 
 # ============================================================
@@ -325,22 +396,26 @@ def init_db():
 # ============================================================
 
 def get_user_id():
-    uid = request.cookies.get(
+    user_id = request.cookies.get(
         "veya_user"
     )
 
-    if not uid:
-        uid = str(uuid.uuid4())
+    if not user_id:
+        user_id = str(uuid.uuid4())
 
-    conn = db()
+    connection = db()
 
-    row = conn.execute(
-        "SELECT id FROM users WHERE id = ?",
-        (uid,),
+    row = connection.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE id = ?
+        """,
+        (user_id,),
     ).fetchone()
 
     if not row:
-        conn.execute(
+        connection.execute(
             """
             INSERT INTO users(
                 id,
@@ -350,22 +425,22 @@ def get_user_id():
             VALUES (?, 'free', ?)
             """,
             (
-                uid,
+                user_id,
                 utc_now(),
             ),
         )
 
-        conn.commit()
+        connection.commit()
 
-    conn.close()
+    connection.close()
 
-    return uid
+    return user_id
 
 
 def get_plan(user_id):
-    conn = db()
+    connection = db()
 
-    row = conn.execute(
+    row = connection.execute(
         """
         SELECT plan
         FROM users
@@ -374,7 +449,7 @@ def get_plan(user_id):
         (user_id,),
     ).fetchone()
 
-    conn.close()
+    connection.close()
 
     if not row:
         return "free"
@@ -388,65 +463,144 @@ def get_plan(user_id):
 
 
 # ============================================================
-# 5000 VIRTUAL SPECIALIST ROLES
+# 5000 VIRTUAL AGENT ROLES
 #
 # These are orchestration roles.
 # They are NOT 5000 separate foundation models.
 # ============================================================
 
 BASE_ROLES = [
-    "researcher",
-    "coder",
-    "debugger",
-    "mathematician",
-    "scientist",
-    "writer",
-    "editor",
-    "planner",
-    "analyst",
-    "fact_checker",
-    "critic",
-    "summarizer",
-    "translator",
-    "teacher",
-    "product_designer",
-    "business_analyst",
-    "security_reviewer",
-    "data_analyst",
-    "architect",
-    "strategist",
+    "reasoning",
+    "coding",
+    "research",
+    "mathematics",
+    "science",
+    "writing",
+    "editing",
+    "planning",
+    "analysis",
+    "fact_checking",
+    "criticism",
+    "summarization",
+    "translation",
+    "teaching",
+    "product_design",
+    "business_analysis",
+    "security_review",
+    "data_analysis",
+    "architecture",
+    "strategy",
 ]
 
 
 def build_virtual_agents(count=5000):
     agents = []
 
-    for i in range(count):
-        base = BASE_ROLES[
-            i % len(BASE_ROLES)
+    for index in range(count):
+        role = BASE_ROLES[
+            index % len(BASE_ROLES)
         ]
 
-        agents.append(
-            {
-                "id": f"veya-agent-{i + 1:04d}",
-                "role": (
-                    f"{base}-"
-                    f"{(i // len(BASE_ROLES)) + 1}"
-                ),
-                "index": i + 1,
-            }
-        )
+        agents.append({
+            "id":
+                f"veya-agent-{index + 1:04d}",
+
+            "role":
+                f"{role}-"
+                f"{(index // len(BASE_ROLES)) + 1}",
+
+            "index":
+                index + 1,
+        })
 
     return agents
 
 
-VIRTUAL_AGENTS = build_virtual_agents(
-    5000
-)
+VIRTUAL_AGENTS = build_virtual_agents()
 
 
 # ============================================================
-# PROVIDER CONFIGURATION
+# PREMIUM AGENT ROLES
+#
+# Five slots per provider:
+#
+# 1. Reasoning
+# 2. Coding
+# 3. Research
+# 4. Creative
+# 5. Verifier
+#
+# These roles are prompt/orchestration layers around real
+# provider models.
+# ============================================================
+
+PREMIUM_AGENT_ROLES = [
+    {
+        "id": "reasoning",
+        "name": "Deep Reasoning Agent",
+        "keywords": [
+            "reason",
+            "thinking",
+            "pro",
+            "opus",
+            "large",
+            "ultra",
+        ],
+    },
+
+    {
+        "id": "coding",
+        "name": "Advanced Coding Agent",
+        "keywords": [
+            "code",
+            "coder",
+            "dev",
+            "reason",
+            "thinking",
+            "pro",
+        ],
+    },
+
+    {
+        "id": "research",
+        "name": "Research & Analysis Agent",
+        "keywords": [
+            "reason",
+            "research",
+            "pro",
+            "large",
+            "thinking",
+        ],
+    },
+
+    {
+        "id": "creative",
+        "name": "Creative Intelligence Agent",
+        "keywords": [
+            "creative",
+            "large",
+            "pro",
+            "opus",
+            "sonnet",
+        ],
+    },
+
+    {
+        "id": "verifier",
+        "name": "Verification Agent",
+        "keywords": [
+            "reason",
+            "thinking",
+            "pro",
+            "large",
+            "verify",
+        ],
+    },
+]
+
+
+# ============================================================
+# PROVIDER CONFIG
 # ============================================================
 
 def provider_configured(provider):
@@ -462,11 +616,9 @@ def provider_configured(provider):
         "microsoft",
         "meta",
     ):
-        return (
-            bool(API_KEYS.get(provider))
-            and bool(
-                BASE_URLS.get(provider)
-            )
+        return bool(
+            API_KEYS.get(provider)
+            and BASE_URLS.get(provider)
         )
 
     return bool(
@@ -474,8 +626,38 @@ def provider_configured(provider):
     )
 
 
+def provider_headers(provider):
+    key = API_KEYS.get(
+        provider,
+        "",
+    )
+
+    if provider == "anthropic":
+        return {
+            "x-api-key": key,
+            "anthropic-version":
+                "2023-06-01",
+            "Content-Type":
+                "application/json",
+        }
+
+    if provider == "microsoft":
+        return {
+            "api-key": key,
+            "Content-Type":
+                "application/json",
+        }
+
+    return {
+        "Authorization":
+            f"Bearer {key}",
+        "Content-Type":
+            "application/json",
+    }
+
+
 # ============================================================
-# HTTP HELPERS
+# HTTP
 # ============================================================
 
 def request_json(
@@ -498,7 +680,7 @@ def request_json(
     if not response.ok:
         raise RuntimeError(
             f"HTTP {response.status_code}: "
-            f"{response.text[:1000]}"
+            f"{response.text[:1500]}"
         )
 
     if not response.text.strip():
@@ -508,7 +690,34 @@ def request_json(
 
 
 # ============================================================
-# MODEL DISCOVERY
+# MODEL FILTER
+# ============================================================
+
+NON_CHAT_TERMS = (
+    "embedding",
+    "embed",
+    "rerank",
+    "moderation",
+    "whisper",
+    "tts",
+    "transcribe",
+    "transcription",
+    "speech-only",
+    "audio-only",
+)
+
+
+def looks_like_chat_model(model):
+    name = model.lower()
+
+    return not any(
+        term in name
+        for term in NON_CHAT_TERMS
+    )
+
+
+# ============================================================
+# OPENAI-COMPATIBLE DISCOVERY
 # ============================================================
 
 def discover_openai_compatible_models(
@@ -519,7 +728,9 @@ def discover_openai_compatible_models(
     if cached is not None:
         return cached
 
-    if not provider_configured(provider):
+    if not provider_configured(
+        provider
+    ):
         return []
 
     base = BASE_URLS.get(
@@ -530,19 +741,16 @@ def discover_openai_compatible_models(
     if not base:
         return []
 
-    headers = {
-        "Authorization":
-            f"Bearer {API_KEYS[provider]}",
-    }
-
     data = request_json(
         "GET",
         base + "/models",
-        headers=headers,
+        headers=provider_headers(
+            provider
+        ),
         timeout=30,
     )
 
-    result = []
+    models = []
 
     for item in data.get(
         "data",
@@ -550,22 +758,31 @@ def discover_openai_compatible_models(
     ):
         model_id = item.get("id")
 
-        if model_id:
-            result.append(
+        if (
+            model_id
+            and looks_like_chat_model(
+                model_id
+            )
+        ):
+            models.append(
                 model_id
             )
 
-    result = list(
-        dict.fromkeys(result)
+    models = list(
+        dict.fromkeys(models)
     )
 
     cache_set(
         provider,
-        result,
+        models
     )
 
-    return result
+    return models
 
+
+# ============================================================
+# ANTHROPIC DISCOVERY
+# ============================================================
 
 def discover_anthropic_models():
     provider = "anthropic"
@@ -580,46 +797,46 @@ def discover_anthropic_models():
     ):
         return []
 
-    headers = {
-        "x-api-key":
-            API_KEYS[provider],
-
-        "anthropic-version":
-            "2023-06-01",
-    }
-
     data = request_json(
         "GET",
         BASE_URLS[provider].rstrip("/")
         + "/v1/models",
-        headers=headers,
+        headers=provider_headers(
+            provider
+        ),
         timeout=30,
     )
 
-    result = []
+    models = []
 
     for item in data.get(
         "data",
         [],
     ):
-        model_id = item.get("id")
+        model_id = item.get(
+            "id"
+        )
 
         if model_id:
-            result.append(
+            models.append(
                 model_id
             )
 
-    result = list(
-        dict.fromkeys(result)
+    models = list(
+        dict.fromkeys(models)
     )
 
     cache_set(
         provider,
-        result,
+        models
     )
 
-    return result
+    return models
 
+
+# ============================================================
+# GOOGLE DISCOVERY
+# ============================================================
 
 def discover_google_models():
     provider = "google"
@@ -634,22 +851,18 @@ def discover_google_models():
     ):
         return []
 
-    url = (
-        BASE_URLS[provider].rstrip("/")
-        + "/models"
-    )
-
     data = request_json(
         "GET",
-        url,
+        BASE_URLS[provider].rstrip("/")
+        + "/models",
         params={
             "key":
-                API_KEYS[provider],
+                API_KEYS[provider]
         },
         timeout=30,
     )
 
-    result = []
+    models = []
 
     for item in data.get(
         "models",
@@ -665,34 +878,45 @@ def discover_google_models():
             [],
         )
 
+        if not name:
+            continue
+
         if (
-            name
-            and (
-                not methods
-                or "generateContent"
-                in methods
-            )
+            methods
+            and "generateContent"
+            not in methods
         ):
-            if name.startswith(
-                "models/"
-            ):
-                name = name[
-                    len("models/") :
-                ]
+            continue
 
-            result.append(name)
+        if name.startswith(
+            "models/"
+        ):
+            name = name[
+                len("models/"):
+            ]
 
-    result = list(
-        dict.fromkeys(result)
+        if looks_like_chat_model(
+            name
+        ):
+            models.append(
+                name
+            )
+
+    models = list(
+        dict.fromkeys(models)
     )
 
     cache_set(
         provider,
-        result,
+        models
     )
 
-    return result
+    return models
 
+
+# ============================================================
+# UNIVERSAL MODEL DISCOVERY
+# ============================================================
 
 def discover_models(provider):
     override = MODEL_OVERRIDES.get(
@@ -700,139 +924,260 @@ def discover_models(provider):
         [],
     )
 
-    if override:
-        return override
+    try:
 
-    if provider == "google":
-        try:
-            return discover_google_models()
-        except Exception:
-            return []
+        if provider == "google":
+            live = discover_google_models()
 
-    if provider == "anthropic":
-        try:
-            return discover_anthropic_models()
-        except Exception:
-            return []
+        elif provider == "anthropic":
+            live = discover_anthropic_models()
 
+        elif provider in (
+            "openai",
+            "xai",
+            "deepseek",
+            "mistral",
+            "nvidia",
+            "microsoft",
+            "meta",
+            "groq",
+        ):
+            live = (
+                discover_openai_compatible_models(
+                    provider
+                )
+            )
+
+        else:
+            live = []
+
+    except Exception:
+        live = []
+
+    # Live provider list wins.
+    if live:
+
+        if override:
+
+            valid = [
+                model
+                for model in override
+                if model in live
+            ]
+
+            if valid:
+                return valid
+
+        return live
+
+    # For Microsoft/Meta, explicit deployments
+    # may be necessary.
     if provider in (
-        "openai",
-        "xai",
-        "deepseek",
-        "mistral",
-        "nvidia",
         "microsoft",
         "meta",
-        "groq",
     ):
-        try:
-            return discover_openai_compatible_models(
-                provider
-            )
-        except Exception:
-            return []
+        return override
 
     return []
 
 
 # ============================================================
-# MODEL RANKING
+# ADVANCED MODEL RANKING
 # ============================================================
 
 def model_score(
     provider,
     model,
-    task,
+    task="general",
 ):
     name = model.lower()
 
     score = 0
 
+    # Newer / frontier-style signals
+    frontier_words = [
+        "ultra",
+        "pro",
+        "opus",
+        "reason",
+        "thinking",
+        "large",
+        "flagship",
+        "frontier",
+        "advanced",
+        "max",
+    ]
+
+    for word in frontier_words:
+        if word in name:
+            score += 10
+
+    # Coding
     if task == "coding":
-        if any(
-            x in name
-            for x in [
-                "code",
-                "coder",
-                "reason",
-                "reasoning",
-            ]
+        for word in (
+            "code",
+            "coder",
+            "dev",
+            "reason",
+            "thinking",
         ):
-            score += 10
+            if word in name:
+                score += 12
 
+    # Research
     elif task == "research":
-        if any(
-            x in name
-            for x in [
-                "pro",
-                "reason",
-                "thinking",
-                "research",
-            ]
+        for word in (
+            "research",
+            "reason",
+            "thinking",
+            "pro",
+            "large",
         ):
-            score += 10
+            if word in name:
+                score += 12
 
+    # Mathematics
     elif task == "math":
-        if any(
-            x in name
-            for x in [
-                "reason",
-                "thinking",
-                "pro",
-            ]
+        for word in (
+            "reason",
+            "thinking",
+            "pro",
+            "large",
         ):
-            score += 10
+            if word in name:
+                score += 12
 
+    # Writing
     elif task == "writing":
-        if any(
-            x in name
-            for x in [
-                "opus",
-                "sonnet",
-                "pro",
-                "large",
-            ]
+        for word in (
+            "opus",
+            "sonnet",
+            "creative",
+            "large",
+            "pro",
         ):
-            score += 8
+            if word in name:
+                score += 12
 
-    else:
-        if any(
-            x in name
-            for x in [
-                "pro",
-                "large",
-                "reason",
-                "thinking",
-                "opus",
-                "sonnet",
-            ]
-        ):
-            score += 5
-
-    if provider == "openai":
-        score += 3
-
-    if provider == "anthropic":
-        score += 3
-
-    if provider == "google":
+    # Provider weighting is NOT a claim that one provider
+    # is universally better.
+    if provider in (
+        "openai",
+        "anthropic",
+        "google",
+        "xai",
+    ):
         score += 2
 
     return score
 
 
+def rank_models(
+    provider,
+    models,
+    task="general",
+):
+    return sorted(
+        models,
+        key=lambda model:
+            model_score(
+                provider,
+                model,
+                task,
+            ),
+        reverse=True,
+    )
+
+
 # ============================================================
-# AVAILABLE MODELS FOR PLAN
+# TOP 5 MODELS PER PROVIDER
 # ============================================================
 
-def available_models_for_plan(
-    plan
+def top_models_for_provider(
+    provider,
+    limit=5,
+    task="general",
+):
+    models = discover_models(
+        provider
+    )
+
+    ranked = rank_models(
+        provider,
+        models,
+        task,
+    )
+
+    return ranked[:limit]
+
+
+# ============================================================
+# FIVE PREMIUM AGENT SLOTS
+# ============================================================
+
+def build_provider_agents(
+    provider,
+    limit=5,
+    task="general",
+):
+    models = top_models_for_provider(
+        provider,
+        limit,
+        task,
+    )
+
+    agents = []
+
+    if not models:
+        return agents
+
+    for index in range(limit):
+
+        role = PREMIUM_AGENT_ROLES[
+            index
+            % len(PREMIUM_AGENT_ROLES)
+        ]
+
+        # If fewer than 5 real models exist,
+        # reuse real models instead of inventing IDs.
+        model = models[
+            index % len(models)
+        ]
+
+        agents.append({
+            "provider": provider,
+            "slot": index + 1,
+            "agent_id":
+                f"{provider}-{role['id']}-{index + 1}",
+            "agent_name":
+                role["name"],
+            "model": model,
+            "real_model": True,
+        })
+
+    return agents
+
+
+# ============================================================
+# PREMIUM CATALOG
+# ============================================================
+
+def premium_catalog(
+    plan,
+    task="general",
 ):
     result = []
 
-    for provider in PLANS[
-        plan
-    ]["providers"]:
+    if plan not in PLANS:
+        return result
+
+    limit = PLANS[plan][
+        "premium_slots_per_provider"
+    ]
+
+    for provider in PLANS[plan][
+        "providers"
+    ]:
 
         if provider == "local":
             continue
@@ -842,23 +1187,15 @@ def available_models_for_plan(
         ):
             continue
 
-        models = discover_models(
-            provider
+        agents = build_provider_agents(
+            provider,
+            limit,
+            task,
         )
 
-        for model in models:
-            result.append(
-                {
-                    "provider":
-                        provider,
-
-                    "model":
-                        model,
-
-                    "available":
-                        True,
-                }
-            )
+        result.extend(
+            agents
+        )
 
     return result
 
@@ -868,36 +1205,37 @@ def available_models_for_plan(
 # ============================================================
 
 def free_model():
+    # Google is the primary free-plan provider
+    # if configured.
     if provider_configured(
         "google"
     ):
+
         models = discover_models(
             "google"
         )
 
         if models:
+
+            # Prefer lightweight/fast signals.
+            ranked = sorted(
+                models,
+                key=lambda x: (
+                    "flash" not in x.lower(),
+                    len(x),
+                ),
+            )
+
             return (
                 "google",
-                models[0],
+                ranked[0],
             )
 
-    if provider_configured(
-        "groq"
-    ):
-        models = discover_models(
-            "groq"
-        )
-
-        if models:
-            return (
-                "groq",
-                models[0],
-            )
-
+    # Local fallback
     local_url = os.getenv(
         "LOCAL_BASE_URL",
         "",
-    )
+    ).strip()
 
     if local_url:
         return (
@@ -912,6 +1250,142 @@ def free_model():
 
 
 # ============================================================
+# TASK ROUTER
+# ============================================================
+
+def route_task(text):
+    value = text.lower()
+
+    if any(
+        word in value
+        for word in (
+            "python",
+            "javascript",
+            "typescript",
+            "coding",
+            "code",
+            "debug",
+            "docker",
+            "api",
+            "program",
+            "github",
+        )
+    ):
+        return "coding"
+
+    if any(
+        word in value
+        for word in (
+            "calculate",
+            "equation",
+            "math",
+            "mathematics",
+            "proof",
+            "algebra",
+        )
+    ):
+        return "math"
+
+    if any(
+        word in value
+        for word in (
+            "research",
+            "latest",
+            "current",
+            "today",
+            "compare",
+            "analysis",
+        )
+    ):
+        return "research"
+
+    if any(
+        word in value
+        for word in (
+            "write",
+            "story",
+            "article",
+            "email",
+            "essay",
+            "rewrite",
+        )
+    ):
+        return "writing"
+
+    return "general"
+
+
+# ============================================================
+# AGENT PROMPT
+# ============================================================
+
+def agent_instruction(agent_role):
+    instructions = {
+        "reasoning":
+            """
+            Solve difficult problems carefully.
+            Check assumptions.
+            Separate facts from inference.
+            Give a clear final answer.
+            """,
+
+        "coding":
+            """
+            Act as an advanced software engineer.
+            Inspect architecture, dependencies,
+            edge cases and runtime failures.
+            Prefer robust production-safe code.
+            """,
+
+        "research":
+            """
+            Act as a research and analysis specialist.
+            Compare evidence, identify uncertainty,
+            and do not invent sources or facts.
+            """,
+
+        "creative":
+            """
+            Act as a high-quality creative and writing
+            specialist while preserving accuracy.
+            """,
+
+        "verifier":
+            """
+            Act as a verification layer.
+            Check the answer for contradictions,
+            unsupported claims and obvious errors
+            before responding.
+            """,
+    }
+
+    return instructions.get(
+        agent_role,
+        instructions["reasoning"],
+    )
+
+
+SYSTEM_BASE = """
+You are Veya.
+
+You are an orchestration platform that can use
+multiple independent AI providers.
+
+Never claim that you are another company's model.
+
+If provider/model information is supplied,
+it represents the actual configured provider/model.
+
+Do not invent unavailable models.
+
+Do not claim that a virtual Veya agent is a separate
+foundation model when it is actually an orchestration role.
+
+Be accurate, useful and transparent.
+"""
+
+
+# ============================================================
 # OPENAI
 # ============================================================
 
@@ -919,57 +1393,55 @@ def call_openai(
     model,
     messages,
 ):
-    key = API_KEYS["openai"]
-
-    payload = {
-        "model": model,
-        "input": messages,
-    }
-
     data = request_json(
         "POST",
         BASE_URLS["openai"].rstrip("/")
         + "/responses",
         headers={
             "Authorization":
-                f"Bearer {key}",
-
+                f"Bearer {API_KEYS['openai']}",
             "Content-Type":
                 "application/json",
         },
-        payload=payload,
+        payload={
+            "model": model,
+            "input": messages,
+        },
         timeout=180,
     )
 
-    text = data.get(
+    answer = data.get(
         "output_text",
         "",
     )
 
-    if not text:
-        chunks = []
+    if not answer:
+
+        parts = []
 
         for item in data.get(
             "output",
             [],
         ):
+
             for content in item.get(
                 "content",
                 [],
             ):
-                if (
-                    content.get("type")
-                    == "output_text"
-                ):
-                    chunks.append(
+
+                if content.get(
+                    "type"
+                ) == "output_text":
+
+                    parts.append(
                         content.get(
                             "text",
                             "",
                         )
                     )
 
-        text = "\n".join(
-            chunks
+        answer = "\n".join(
+            parts
         ).strip()
 
     usage = data.get(
@@ -978,14 +1450,16 @@ def call_openai(
     )
 
     return (
-        text
+        answer
         or "The model returned no text.",
+
         int(
             usage.get(
                 "input_tokens",
                 0,
             )
         ),
+
         int(
             usage.get(
                 "output_tokens",
@@ -1003,39 +1477,36 @@ def call_anthropic(
     model,
     messages,
 ):
-    key = API_KEYS[
-        "anthropic"
-    ]
-
-    system_parts = []
-
+    system_messages = []
     clean_messages = []
 
     for message in messages:
+
         if message["role"] == "system":
-            system_parts.append(
+            system_messages.append(
                 message["content"]
             )
-        else:
-            clean_messages.append(
-                {
-                    "role":
-                        message["role"],
 
-                    "content":
-                        message["content"],
-                }
-            )
+        else:
+            clean_messages.append({
+                "role":
+                    message["role"],
+                "content":
+                    message["content"],
+            })
 
     payload = {
         "model": model,
         "max_tokens": 4096,
-        "messages": clean_messages,
+        "messages":
+            clean_messages,
     }
 
-    if system_parts:
-        payload["system"] = "\n".join(
-            system_parts
+    if system_messages:
+        payload["system"] = (
+            "\n".join(
+                system_messages
+            )
         )
 
     data = request_json(
@@ -1043,11 +1514,10 @@ def call_anthropic(
         BASE_URLS["anthropic"].rstrip("/")
         + "/v1/messages",
         headers={
-            "x-api-key": key,
-
+            "x-api-key":
+                API_KEYS["anthropic"],
             "anthropic-version":
                 "2023-06-01",
-
             "Content-Type":
                 "application/json",
         },
@@ -1055,14 +1525,18 @@ def call_anthropic(
         timeout=180,
     )
 
-    chunks = []
+    parts = []
 
     for block in data.get(
         "content",
         [],
     ):
-        if block.get("type") == "text":
-            chunks.append(
+
+        if block.get(
+            "type"
+        ) == "text":
+
+            parts.append(
                 block.get(
                     "text",
                     "",
@@ -1075,9 +1549,7 @@ def call_anthropic(
     )
 
     return (
-        "\n".join(
-            chunks
-        ).strip()
+        "\n".join(parts).strip()
         or "The model returned no text.",
 
         int(
@@ -1097,47 +1569,45 @@ def call_anthropic(
 
 
 # ============================================================
-# GOOGLE GEMINI
+# GOOGLE
 # ============================================================
 
 def call_google(
     model,
     messages,
 ):
-    key = API_KEYS[
-        "google"
-    ]
-
     contents = []
-
     system_parts = []
 
     for message in messages:
+
         role = message["role"]
 
         if role == "system":
+
             system_parts.append(
                 message["content"]
             )
+
             continue
 
         if role == "assistant":
             role = "model"
 
-        contents.append(
-            {
-                "role": role,
-                "parts": [
-                    {
-                        "text":
-                            message["content"]
-                    }
-                ],
-            }
-        )
+        contents.append({
+            "role": role,
+            "parts": [
+                {
+                    "text":
+                        message["content"]
+                }
+            ],
+        })
 
     payload = {
-        "contents": contents,
+        "contents":
+            contents,
+
         "generationConfig": {
             "maxOutputTokens":
                 4096,
@@ -1145,6 +1615,7 @@ def call_google(
     }
 
     if system_parts:
+
         payload[
             "systemInstruction"
         ] = {
@@ -1158,42 +1629,39 @@ def call_google(
             ]
         }
 
-    url = (
-        BASE_URLS["google"].rstrip("/")
-        + f"/models/{model}:generateContent"
-    )
-
     data = request_json(
         "POST",
-        url,
+        BASE_URLS["google"].rstrip("/")
+        + f"/models/{model}:generateContent",
         params={
-            "key": key,
+            "key":
+                API_KEYS["google"]
         },
         headers={
             "Content-Type":
-                "application/json",
+                "application/json"
         },
         payload=payload,
         timeout=180,
     )
 
-    chunks = []
+    parts = []
 
     for candidate in data.get(
         "candidates",
         [],
     ):
-        content = candidate.get(
+
+        for part in candidate.get(
             "content",
             {},
-        )
-
-        for part in content.get(
+        ).get(
             "parts",
             [],
         ):
+
             if part.get("text"):
-                chunks.append(
+                parts.append(
                     part["text"]
                 )
 
@@ -1203,9 +1671,7 @@ def call_google(
     )
 
     return (
-        "\n".join(
-            chunks
-        ).strip()
+        "\n".join(parts).strip()
         or "The model returned no text.",
 
         int(
@@ -1227,13 +1693,12 @@ def call_google(
 # ============================================================
 # OPENAI-COMPATIBLE PROVIDERS
 #
-# Used by:
 # xAI
 # DeepSeek
 # Mistral
 # NVIDIA
-# Microsoft-compatible endpoints
-# Meta-compatible endpoints
+# Microsoft Foundry
+# Meta-compatible endpoint
 # Groq
 # ============================================================
 
@@ -1245,7 +1710,7 @@ def call_openai_compatible(
     base = BASE_URLS.get(
         provider,
         "",
-    )
+    ).rstrip("/")
 
     if not base:
         raise RuntimeError(
@@ -1262,25 +1727,17 @@ def call_openai_compatible(
             f"{provider} API key is not configured."
         )
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": 4096,
-    }
-
     data = request_json(
         "POST",
-        base.rstrip("/")
-        + "/chat/completions",
-        headers={
-            "Authorization":
-                f"Bearer {key}",
-
-            "Content-Type":
-                "application/json",
+        base + "/chat/completions",
+        headers=provider_headers(
+            provider
+        ),
+        payload={
+            "model": model,
+            "messages": messages,
+            "max_tokens": 4096,
         },
-        payload=payload,
         timeout=180,
     )
 
@@ -1294,12 +1751,10 @@ def call_openai_compatible(
             f"{provider} returned no choices."
         )
 
-    message = choices[0].get(
+    content = choices[0].get(
         "message",
         {},
-    )
-
-    content = message.get(
+    ).get(
         "content",
         "",
     )
@@ -1308,17 +1763,21 @@ def call_openai_compatible(
         content,
         list,
     ):
+
         parts = []
 
-        for part in content:
+        for item in content:
+
             if isinstance(
-                part,
+                item,
                 dict,
+            ) and item.get(
+                "text"
             ):
-                if part.get("text"):
-                    parts.append(
-                        part["text"]
-                    )
+
+                parts.append(
+                    item["text"]
+                )
 
         content = "\n".join(
             parts
@@ -1360,29 +1819,25 @@ def call_local(
     base = os.getenv(
         "LOCAL_BASE_URL",
         "",
-    ).strip()
+    ).strip().rstrip("/")
 
     if not base:
         raise RuntimeError(
             "LOCAL_BASE_URL is not configured."
         )
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": 4096,
-    }
-
     data = request_json(
         "POST",
-        base.rstrip("/")
-        + "/chat/completions",
+        base + "/chat/completions",
         headers={
             "Content-Type":
-                "application/json",
+                "application/json"
         },
-        payload=payload,
+        payload={
+            "model": model,
+            "messages": messages,
+            "max_tokens": 4096,
+        },
         timeout=180,
     )
 
@@ -1393,15 +1848,13 @@ def call_local(
 
     if not choices:
         raise RuntimeError(
-            "Local provider returned no choices."
+            "Local model returned no choices."
         )
 
-    message = choices[0].get(
+    content = choices[0].get(
         "message",
         {},
-    )
-
-    text = message.get(
+    ).get(
         "content",
         "",
     )
@@ -1412,7 +1865,7 @@ def call_local(
     )
 
     return (
-        text
+        content
         or "The model returned no text.",
 
         int(
@@ -1432,7 +1885,7 @@ def call_local(
 
 
 # ============================================================
-# UNIFIED PROVIDER CALL
+# UNIFIED CALL
 # ============================================================
 
 def call_provider(
@@ -1472,328 +1925,7 @@ def call_provider(
 
 
 # ============================================================
-# ROUTER
-# ============================================================
-
-def route_task(text):
-    lower = text.lower()
-
-    if any(
-        word in lower
-        for word in [
-            "code",
-            "python",
-            "javascript",
-            "program",
-            "debug",
-            "api",
-            "docker",
-        ]
-    ):
-        return "coding"
-
-    if any(
-        word in lower
-        for word in [
-            "math",
-            "equation",
-            "calculate",
-            "proof",
-        ]
-    ):
-        return "math"
-
-    if any(
-        word in lower
-        for word in [
-            "research",
-            "latest",
-            "current",
-            "news",
-            "today",
-        ]
-    ):
-        return "research"
-
-    if any(
-        word in lower
-        for word in [
-            "write",
-            "story",
-            "article",
-            "email",
-        ]
-    ):
-        return "writing"
-
-    return "general"
-
-
-# ============================================================
-# MODEL CHOICE
-# ============================================================
-
-def choose_model(
-    plan,
-    requested_provider=None,
-    requested_model=None,
-    task="general",
-):
-    models = available_models_for_plan(
-        plan
-    )
-
-    if (
-        requested_provider
-        and requested_model
-    ):
-        for item in models:
-            if (
-                item["provider"]
-                == requested_provider
-                and item["model"]
-                == requested_model
-            ):
-                return (
-                    requested_provider,
-                    requested_model,
-                )
-
-        raise RuntimeError(
-            "That model is unavailable "
-            "for your plan or is not "
-            "configured on the server."
-        )
-
-    if not models:
-        raise RuntimeError(
-            "No configured provider/model "
-            "is available for this plan."
-        )
-
-    ranked = sorted(
-        models,
-        key=lambda item:
-            model_score(
-                item["provider"],
-                item["model"],
-                task,
-            ),
-        reverse=True,
-    )
-
-    return (
-        ranked[0]["provider"],
-        ranked[0]["model"],
-    )
-
-
-# ============================================================
-# STYLE PRESETS
-# ============================================================
-
-STYLE_PRESETS = {
-    "balanced": (
-        "Answer clearly, accurately and naturally. "
-        "Prefer useful structure without unnecessary verbosity."
-    ),
-
-    "reasoning": (
-        "Think carefully before answering. "
-        "Check assumptions, edge cases and contradictions. "
-        "Give a concise but rigorous final answer."
-    ),
-
-    "coding": (
-        "Act as a senior software engineer. "
-        "Prefer correct, maintainable and testable code. "
-        "Point out important implementation risks."
-    ),
-
-    "writing": (
-        "Write naturally and clearly. "
-        "Use strong organization and good explanations."
-    ),
-
-    "anthropic_style": (
-        "Use a calm, careful and thoughtful writing style. "
-        "Be precise and transparent about uncertainty. "
-        "This is a Veya style preset and is not Claude."
-    ),
-}
-
-
-SYSTEM_PROMPT = """
-You are Veya, a multi-provider AI platform.
-
-Rules:
-
-- Never falsely claim to be another company's model.
-- Only identify a provider/model when that actual provider/model
-  is being used.
-- Never invent provider access.
-- Be honest about uncertainty.
-- Give useful and accurate answers.
-"""
-
-
-# ============================================================
-# USAGE
-# ============================================================
-
-def month_start():
-    now = datetime.now(
-        timezone.utc
-    )
-
-    return now.strftime(
-        "%Y-%m"
-    )
-
-
-def monthly_cost(
-    user_id
-):
-    conn = db()
-
-    row = conn.execute(
-        """
-        SELECT COALESCE(
-            SUM(estimated_cost_usd),
-            0
-        )
-        FROM usage
-        WHERE user_id = ?
-        AND substr(
-            created_at,
-            1,
-            7
-        ) = ?
-        """,
-        (
-            user_id,
-            month_start(),
-        ),
-    ).fetchone()
-
-    conn.close()
-
-    return float(
-        row[0] or 0
-    )
-
-
-def daily_message_count(
-    user_id
-):
-    today = (
-        datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%d")
-    )
-
-    conn = db()
-
-    row = conn.execute(
-        """
-        SELECT COUNT(*)
-        FROM messages m
-        JOIN chats c
-          ON c.id = m.chat_id
-        WHERE c.user_id = ?
-        AND m.role = 'user'
-        AND substr(
-            m.created_at,
-            1,
-            10
-        ) = ?
-        """,
-        (
-            user_id,
-            today,
-        ),
-    ).fetchone()
-
-    conn.close()
-
-    return int(
-        row[0] or 0
-    )
-
-
-def estimate_cost(
-    model,
-    input_tokens,
-    output_tokens,
-):
-    # Conservative internal estimate.
-    # Actual provider billing can differ.
-    return (
-        (
-            float(
-                input_tokens or 0
-            )
-            / 1_000_000
-        )
-        * 2.0
-        +
-        (
-            float(
-                output_tokens or 0
-            )
-            / 1_000_000
-        )
-        * 8.0
-    )
-
-
-def record_usage(
-    user_id,
-    provider,
-    model,
-    input_tokens,
-    output_tokens,
-):
-    cost = estimate_cost(
-        model,
-        input_tokens,
-        output_tokens,
-    )
-
-    conn = db()
-
-    conn.execute(
-        """
-        INSERT INTO usage(
-            user_id,
-            provider,
-            model,
-            input_tokens,
-            output_tokens,
-            estimated_cost_usd,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            user_id,
-            provider,
-            model,
-            input_tokens,
-            output_tokens,
-            cost,
-            utc_now(),
-        ),
-    )
-
-    conn.commit()
-    conn.close()
-
-    return cost
-
-
-# ============================================================
-# CHAT HELPERS
+# CHAT DATABASE
 # ============================================================
 
 def create_chat(
@@ -1806,9 +1938,9 @@ def create_chat(
 
     now = utc_now()
 
-    conn = db()
+    connection = db()
 
-    conn.execute(
+    connection.execute(
         """
         INSERT INTO chats(
             id,
@@ -1828,8 +1960,8 @@ def create_chat(
         ),
     )
 
-    conn.commit()
-    conn.close()
+    connection.commit()
+    connection.close()
 
     return chat_id
 
@@ -1838,9 +1970,9 @@ def ensure_chat(
     user_id,
     chat_id,
 ):
-    conn = db()
+    connection = db()
 
-    row = conn.execute(
+    row = connection.execute(
         """
         SELECT id
         FROM chats
@@ -1853,14 +1985,12 @@ def ensure_chat(
         ),
     ).fetchone()
 
-    conn.close()
+    connection.close()
 
     if not row:
         raise RuntimeError(
             "Chat not found."
         )
-
-    return chat_id
 
 
 def save_message(
@@ -1869,12 +1999,13 @@ def save_message(
     content,
     provider=None,
     model=None,
+    agent_role=None,
 ):
     now = utc_now()
 
-    conn = db()
+    connection = db()
 
-    conn.execute(
+    connection.execute(
         """
         INSERT INTO messages(
             chat_id,
@@ -1882,9 +2013,10 @@ def save_message(
             content,
             provider,
             model,
+            agent_role,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             chat_id,
@@ -1892,11 +2024,12 @@ def save_message(
             content,
             provider,
             model,
+            agent_role,
             now,
         ),
     )
 
-    conn.execute(
+    connection.execute(
         """
         UPDATE chats
         SET updated_at = ?
@@ -1908,23 +2041,24 @@ def save_message(
         ),
     )
 
-    conn.commit()
-    conn.close()
+    connection.commit()
+    connection.close()
 
 
 def get_messages(
     chat_id,
     limit=30,
 ):
-    conn = db()
+    connection = db()
 
-    rows = conn.execute(
+    rows = connection.execute(
         """
         SELECT
             role,
             content,
             provider,
             model,
+            agent_role,
             created_at
         FROM messages
         WHERE chat_id = ?
@@ -1937,7 +2071,7 @@ def get_messages(
         ),
     ).fetchall()
 
-    conn.close()
+    connection.close()
 
     rows = list(
         reversed(rows)
@@ -1950,39 +2084,197 @@ def get_messages(
 
 
 # ============================================================
+# USAGE
+# ============================================================
+
+def daily_message_count(
+    user_id,
+):
+    today = datetime.now(
+        timezone.utc
+    ).strftime(
+        "%Y-%m-%d"
+    )
+
+    connection = db()
+
+    row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM messages m
+        JOIN chats c
+        ON c.id = m.chat_id
+        WHERE c.user_id = ?
+        AND m.role = 'user'
+        AND substr(
+            m.created_at,
+            1,
+            10
+        ) = ?
+        """,
+        (
+            user_id,
+            today,
+        ),
+    ).fetchone()
+
+    connection.close()
+
+    return int(
+        row[0] or 0
+    )
+
+
+def monthly_cost(
+    user_id,
+):
+    month = datetime.now(
+        timezone.utc
+    ).strftime(
+        "%Y-%m"
+    )
+
+    connection = db()
+
+    row = connection.execute(
+        """
+        SELECT COALESCE(
+            SUM(estimated_cost_usd),
+            0
+        )
+        FROM usage
+        WHERE user_id = ?
+        AND substr(
+            created_at,
+            1,
+            7
+        ) = ?
+        """,
+        (
+            user_id,
+            month,
+        ),
+    ).fetchone()
+
+    connection.close()
+
+    return float(
+        row[0] or 0
+    )
+
+
+def estimate_cost(
+    input_tokens,
+    output_tokens,
+):
+    # Internal safety estimate only.
+    # Actual provider pricing can differ.
+    return (
+        (
+            input_tokens
+            / 1_000_000
+        ) * 2.0
+        +
+        (
+            output_tokens
+            / 1_000_000
+        ) * 8.0
+    )
+
+
+def record_usage(
+    user_id,
+    provider,
+    model,
+    agent_role,
+    input_tokens,
+    output_tokens,
+):
+    cost = estimate_cost(
+        input_tokens,
+        output_tokens,
+    )
+
+    connection = db()
+
+    connection.execute(
+        """
+        INSERT INTO usage(
+            user_id,
+            provider,
+            model,
+            agent_role,
+            input_tokens,
+            output_tokens,
+            estimated_cost_usd,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            provider,
+            model,
+            agent_role,
+            input_tokens,
+            output_tokens,
+            cost,
+            utc_now(),
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+    return cost
+
+
+# ============================================================
 # ROUTES
 # ============================================================
 
 @app.get("/api/health")
 def health():
-    return jsonify(
-        {
-            "ok": True,
-            "app": APP_NAME,
-            "version": VERSION,
-            "time": utc_now(),
-        }
-    )
+    return jsonify({
+        "ok": True,
+        "app": APP_NAME,
+        "version": VERSION,
+        "time": utc_now(),
+    })
 
 
 @app.get("/api/me")
 def me():
-    uid = get_user_id()
-    plan = get_plan(uid)
+    user_id = get_user_id()
 
-    response = jsonify(
-        {
-            "user_id": uid,
-            "plan": plan,
-            "plan_info": PLANS[plan],
-            "monthly_cost_usd":
-                monthly_cost(uid),
-        }
+    plan = get_plan(
+        user_id
     )
+
+    response = jsonify({
+        "user_id":
+            user_id,
+
+        "plan":
+            plan,
+
+        "plan_info":
+            PLANS[plan],
+
+        "daily_used":
+            daily_message_count(
+                user_id
+            ),
+
+        "monthly_cost_usd":
+            monthly_cost(
+                user_id
+            ),
+    })
 
     response.set_cookie(
         "veya_user",
-        uid,
+        user_id,
         httponly=True,
         samesite="Lax",
     )
@@ -1997,78 +2289,156 @@ def plans():
     )
 
 
+# ============================================================
+# PROVIDERS
+# ============================================================
+
 @app.get("/api/providers")
 def providers():
     output = []
 
     for provider in API_KEYS:
-        output.append(
-            {
-                "provider": provider,
-                "configured":
-                    provider_configured(
-                        provider
-                    ),
-                "models":
-                    discover_models(
-                        provider
-                    ),
-            }
+
+        configured = (
+            provider_configured(
+                provider
+            )
         )
+
+        models = []
+
+        if configured:
+
+            try:
+                models = discover_models(
+                    provider
+                )
+            except Exception:
+                models = []
+
+        output.append({
+            "provider":
+                provider,
+
+            "configured":
+                configured,
+
+            "model_count":
+                len(models),
+
+            "models":
+                models,
+        })
 
     return jsonify(
         output
     )
 
 
+# ============================================================
+# MODEL PICKER
+# ============================================================
+
 @app.get("/api/models")
 def models():
-    uid = get_user_id()
+    user_id = get_user_id()
 
-    plan = get_plan(uid)
-
-    return jsonify(
-        {
-            "plan": plan,
-
-            "model_picker":
-                PLANS[plan][
-                    "model_picker"
-                ],
-
-            "models":
-                available_models_for_plan(
-                    plan
-                ),
-        }
+    plan = get_plan(
+        user_id
     )
 
+    task = request.args.get(
+        "task",
+        "general",
+    )
+
+    catalog = premium_catalog(
+        plan,
+        task,
+    )
+
+    return jsonify({
+        "plan":
+            plan,
+
+        "model_picker":
+            PLANS[plan]["model_picker"],
+
+        "providers":
+            PLANS[plan]["providers"],
+
+        "premium_slots_per_provider":
+            PLANS[plan][
+                "premium_slots_per_provider"
+            ],
+
+        "models":
+            catalog,
+    })
+
+
+# ============================================================
+# 5000 AGENTS
+# ============================================================
 
 @app.get("/api/agents")
 def agents():
-    return jsonify(
-        {
-            "count":
-                len(VIRTUAL_AGENTS),
+    return jsonify({
+        "count":
+            len(VIRTUAL_AGENTS),
 
-            "agents":
-                VIRTUAL_AGENTS[:100],
+        "agents":
+            VIRTUAL_AGENTS[:100],
 
-            "note":
-                "These are virtual orchestration "
-                "roles, not 5000 independent "
-                "foundation models.",
-        }
+        "premium_agent_roles":
+            PREMIUM_AGENT_ROLES,
+
+        "note":
+            "5000 virtual orchestration roles. "
+            "They are not 5000 independent foundation models.",
+    })
+
+
+# ============================================================
+# PREMIUM PROVIDER AGENTS
+# ============================================================
+
+@app.get("/api/premium-agents")
+def premium_agents():
+    user_id = get_user_id()
+
+    plan = get_plan(
+        user_id
     )
 
+    task = request.args.get(
+        "task",
+        "general",
+    )
+
+    return jsonify({
+        "plan":
+            plan,
+
+        "agents":
+            premium_catalog(
+                plan,
+                task,
+            ),
+    })
+
+
+# ============================================================
+# CHATS
+# ============================================================
 
 @app.get("/api/chats")
 def chats():
-    uid = get_user_id()
+    user_id = get_user_id()
 
-    conn = db()
+    connection = db()
 
-    rows = conn.execute(
+    rows = connection.execute(
         """
         SELECT
             id,
@@ -2079,60 +2449,125 @@ def chats():
         WHERE user_id = ?
         ORDER BY updated_at DESC
         """,
-        (uid,),
+        (
+            user_id,
+        ),
     ).fetchall()
 
-    conn.close()
+    connection.close()
 
-    return jsonify(
-        [
-            dict(row)
-            for row in rows
-        ]
-    )
+    return jsonify([
+        dict(row)
+        for row in rows
+    ])
 
 
-@app.get(
-    "/api/chats/<chat_id>"
-)
+@app.post("/api/chats/new")
+def new_chat():
+    user_id = get_user_id()
+
+    return jsonify({
+        "chat_id":
+            create_chat(
+                user_id
+            )
+    })
+
+
+@app.get("/api/chats/<chat_id>")
 def chat_detail(
-    chat_id
+    chat_id,
 ):
-    uid = get_user_id()
+    user_id = get_user_id()
 
     ensure_chat(
-        uid,
+        user_id,
         chat_id,
     )
 
-    return jsonify(
-        {
-            "chat_id":
-                chat_id,
+    return jsonify({
+        "chat_id":
+            chat_id,
 
-            "messages":
-                get_messages(
-                    chat_id
-                ),
-        }
-    )
-
-
-@app.post(
-    "/api/chats/new"
-)
-def new_chat():
-    uid = get_user_id()
-
-    chat_id = create_chat(
-        uid
-    )
-
-    return jsonify(
-        {
-            "chat_id":
+        "messages":
+            get_messages(
                 chat_id
-        }
+            ),
+    })
+
+
+# ============================================================
+# MODEL SELECTION
+# ============================================================
+
+def choose_model(
+    plan,
+    requested_provider=None,
+    requested_model=None,
+    task="general",
+):
+    catalog = premium_catalog(
+        plan,
+        task,
+    )
+
+    if not catalog:
+        raise RuntimeError(
+            "No live AI models are available "
+            "for this plan."
+        )
+
+    # User explicitly selected a model.
+    if (
+        requested_provider
+        and requested_model
+    ):
+
+        for item in catalog:
+
+            if (
+                item["provider"]
+                == requested_provider
+                and
+                item["model"]
+                == requested_model
+            ):
+                return (
+                    requested_provider,
+                    requested_model,
+                    item["agent_role"]
+                    if "agent_role"
+                    in item
+                    else item[
+                        "agent_id"
+                    ],
+                )
+
+        raise RuntimeError(
+            "Selected model is not "
+            "currently available."
+        )
+
+    # Otherwise choose highest-ranked model.
+    best = None
+    best_score = -1
+
+    for item in catalog:
+
+        score = model_score(
+            item["provider"],
+            item["model"],
+            task,
+        )
+
+        if score > best_score:
+            best_score = score
+            best = item
+
+    return (
+        best["provider"],
+        best["model"],
+        best["agent_id"],
     )
 
 
@@ -2142,11 +2577,15 @@ def new_chat():
 
 @app.post("/api/chat")
 def chat():
-    uid = get_user_id()
+    user_id = get_user_id()
 
-    plan = get_plan(uid)
+    plan = get_plan(
+        user_id
+    )
 
-    plan_data = PLANS[plan]
+    plan_data = PLANS[
+        plan
+    ]
 
     body = (
         request.get_json(
@@ -2163,35 +2602,29 @@ def chat():
     ).strip()
 
     if not text:
-        return jsonify(
-            {
-                "error":
-                    "Message is required."
-            }
-        ), 400
+        return jsonify({
+            "error":
+                "Message is required."
+        }), 400
 
     if len(text) > 30000:
-        return jsonify(
-            {
-                "error":
-                    "Message is too long."
-            }
-        ), 400
+        return jsonify({
+            "error":
+                "Message is too long."
+        }), 400
 
-    # Daily message limit
     if (
-        daily_message_count(uid)
+        daily_message_count(
+            user_id
+        )
         >= plan_data[
             "daily_messages"
         ]
     ):
-        return jsonify(
-            {
-                "error":
-                    "Your daily message limit "
-                    "has been reached."
-            }
-        ), 429
+        return jsonify({
+            "error":
+                "Daily message limit reached."
+        }), 429
 
     chat_id = body.get(
         "chat_id"
@@ -2199,73 +2632,83 @@ def chat():
 
     if not chat_id:
         chat_id = create_chat(
-            uid,
-            title=text[:60],
+            user_id,
+            text[:60],
         )
 
     ensure_chat(
-        uid,
+        user_id,
         chat_id,
     )
 
-    requested_provider = body.get(
-        "provider"
+    requested_provider = (
+        body.get(
+            "provider"
+        )
     )
 
-    requested_model = body.get(
-        "model"
+    requested_model = (
+        body.get(
+            "model"
+        )
     )
-
-    style = body.get(
-        "style",
-        "balanced",
-    )
-
-    if style not in STYLE_PRESETS:
-        style = "balanced"
-
-    if plan == "free":
-        requested_provider = None
-        requested_model = None
 
     task = route_task(
         text
     )
 
-    try:
-        if plan == "free":
-            provider, model = free_model()
+    # --------------------------------------------------------
+    # FREE
+    # --------------------------------------------------------
 
-            if not provider:
-                return jsonify(
-                    {
-                        "error":
-                            "No free model is "
-                            "configured. Add a "
-                            "configured provider "
-                            "or LOCAL_BASE_URL."
-                    }
-                ), 503
+    if plan == "free":
 
-        else:
-            provider, model = choose_model(
+        provider, model = (
+            free_model()
+        )
+
+        agent_role = (
+            "free-router"
+        )
+
+        if not provider:
+
+            return jsonify({
+                "error":
+                    "No free model is configured. "
+                    "Configure GOOGLE_API_KEY "
+                    "or LOCAL_BASE_URL."
+            }), 503
+
+    # --------------------------------------------------------
+    # PAID
+    # --------------------------------------------------------
+
+    else:
+
+        try:
+
+            (
+                provider,
+                model,
+                agent_role,
+            ) = choose_model(
                 plan,
                 requested_provider,
                 requested_model,
                 task,
             )
 
-    except Exception as exc:
-        return jsonify(
-            {
+        except Exception as exc:
+
+            return jsonify({
                 "error":
                     str(exc)
-            }
-        ), 403
+            }), 503
 
-    current_cost = monthly_cost(
-        uid
-    )
+    # --------------------------------------------------------
+    # Budget
+    # --------------------------------------------------------
 
     budget = plan_data[
         "monthly_provider_budget_usd"
@@ -2273,51 +2716,158 @@ def chat():
 
     if (
         budget > 0
-        and current_cost >= budget
+        and monthly_cost(
+            user_id
+        ) >= budget
     ):
-        return jsonify(
-            {
-                "error":
-                    "Your monthly AI usage "
-                    "budget has been reached."
-            }
-        ), 402
+        return jsonify({
+            "error":
+                "Monthly provider budget reached."
+        }), 402
+
+    # --------------------------------------------------------
+    # Agent instruction
+    # --------------------------------------------------------
+
+    role_name = "reasoning"
+
+    for role in PREMIUM_AGENT_ROLES:
+
+        if role["id"] in str(
+            agent_role
+        ):
+            role_name = role["id"]
+            break
+
+    system_prompt = (
+        SYSTEM_BASE
+        + "\n\n"
+        + agent_instruction(
+            role_name
+        )
+    )
 
     history = get_messages(
         chat_id,
-        limit=20,
+        20,
     )
 
     messages = [
         {
-            "role": "system",
+            "role":
+                "system",
+
             "content":
-                SYSTEM_PROMPT
-                + "\n\n"
-                + STYLE_PRESETS[style],
+                system_prompt,
         }
     ]
 
     for item in history:
+
         if item["role"] in (
             "user",
             "assistant",
         ):
-            messages.append(
-                {
-                    "role":
-                        item["role"],
 
-                    "content":
-                        item["content"],
-                }
+            messages.append({
+                "role":
+                    item["role"],
+
+                "content":
+                    item["content"],
+            })
+
+    messages.append({
+        "role":
+            "user",
+
+        "content":
+            text,
+    })
+
+    # --------------------------------------------------------
+    # Call provider
+    # --------------------------------------------------------
+
+    try:
+
+        (
+            answer,
+            input_tokens,
+            output_tokens,
+        ) = call_provider(
+            provider,
+            model,
+            messages,
+        )
+
+    except Exception as first_error:
+
+        # Refresh live model list.
+        cache_clear(
+            provider
+        )
+
+        # Try one alternative real model.
+        try:
+
+            alternatives = (
+                top_models_for_provider(
+                    provider,
+                    5,
+                    task,
+                )
             )
 
-    messages.append(
-        {
-            "role": "user",
-            "content": text,
-        }
+            alternatives = [
+                x for x in alternatives
+                if x != model
+            ]
+
+            if not alternatives:
+                raise first_error
+
+            fallback_model = (
+                alternatives[0]
+            )
+
+            (
+                answer,
+                input_tokens,
+                output_tokens,
+            ) = call_provider(
+                provider,
+                fallback_model,
+                messages,
+            )
+
+            model = fallback_model
+
+        except Exception as second_error:
+
+            return jsonify({
+                "error":
+                    f"{provider}/{model} failed: "
+                    f"{second_error}",
+
+                "provider":
+                    provider,
+
+                "model":
+                    model,
+            }), 502
+
+    # --------------------------------------------------------
+    # Record
+    # --------------------------------------------------------
+
+    cost = record_usage(
+        user_id,
+        provider,
+        model,
+        agent_role,
+        input_tokens,
+        output_tokens,
     )
 
     save_message(
@@ -2326,94 +2876,66 @@ def chat():
         text,
     )
 
-    try:
-        answer, input_tokens, output_tokens = (
-            call_provider(
-                provider,
-                model,
-                messages,
-            )
-        )
-
-    except Exception as exc:
-        return jsonify(
-            {
-                "error":
-                    (
-                        f"{provider}/{model} failed: "
-                        f"{str(exc)}"
-                    ),
-
-                "provider":
-                    provider,
-
-                "model":
-                    model,
-            }
-        ), 502
-
-    cost = record_usage(
-        uid,
-        provider,
-        model,
-        input_tokens,
-        output_tokens,
-    )
-
     save_message(
         chat_id,
         "assistant",
         answer,
         provider,
         model,
+        agent_role,
     )
 
-    return jsonify(
-        {
-            "chat_id":
-                chat_id,
+    return jsonify({
+        "chat_id":
+            chat_id,
 
-            "answer":
-                answer,
+        "answer":
+            answer,
 
-            "provider":
-                provider,
+        "provider":
+            provider,
 
-            "model":
-                model,
+        "model":
+            model,
 
-            "usage":
-                {
-                    "input_tokens":
-                        input_tokens,
+        "agent":
+            agent_role,
 
-                    "output_tokens":
-                        output_tokens,
+        "task":
+            task,
 
-                    "estimated_cost_usd":
-                        cost,
+        "usage": {
+            "input_tokens":
+                input_tokens,
 
-                    "monthly_cost_usd":
-                        monthly_cost(uid),
+            "output_tokens":
+                output_tokens,
 
-                    "monthly_budget_usd":
-                        budget,
-                },
-        }
-    )
+            "estimated_cost_usd":
+                cost,
+
+            "monthly_cost_usd":
+                monthly_cost(
+                    user_id
+                ),
+
+            "monthly_budget_usd":
+                budget,
+        },
+    })
 
 
 # ============================================================
 # MODEL HEALTH TEST
 # ============================================================
 
-@app.post(
-    "/api/test-model"
-)
+@app.post("/api/test-model")
 def test_model():
-    uid = get_user_id()
+    user_id = get_user_id()
 
-    plan = get_plan(uid)
+    plan = get_plan(
+        user_id
+    )
 
     body = (
         request.get_json(
@@ -2431,104 +2953,99 @@ def test_model():
     )
 
     if not provider or not model:
-        return jsonify(
-            {
-                "error":
-                    "provider and model "
-                    "are required."
-            }
-        ), 400
 
-    if provider not in PLANS[
+        return jsonify({
+            "ok":
+                False,
+
+            "error":
+                "provider and model are required.",
+        }), 400
+
+    catalog = premium_catalog(
         plan
-    ]["providers"]:
-        return jsonify(
-            {
-                "error":
-                    "Provider is not "
-                    "available for this plan."
-            }
-        ), 403
+    )
 
-    if not provider_configured(
-        provider
-    ):
-        return jsonify(
-            {
-                "ok":
-                    False,
+    allowed = any(
+        item["provider"] == provider
+        and item["model"] == model
+        for item in catalog
+    )
 
-                "error":
-                    "Server-side API key "
-                    "or base URL is not configured.",
-            }
-        ), 503
+    if not allowed:
+
+        return jsonify({
+            "ok":
+                False,
+
+            "error":
+                "Model is not currently "
+                "available for this plan.",
+        }), 403
 
     try:
-        answer, input_tokens, output_tokens = (
-            call_provider(
+
+        (
+            answer,
+            input_tokens,
+            output_tokens,
+        ) = call_provider(
+            provider,
+            model,
+            [
+                {
+                    "role":
+                        "system",
+
+                    "content":
+                        "Health check. "
+                        "Reply exactly OK.",
+                },
+                {
+                    "role":
+                        "user",
+
+                    "content":
+                        "Reply exactly OK.",
+                },
+            ],
+        )
+
+        return jsonify({
+            "ok":
+                True,
+
+            "provider":
                 provider,
+
+            "model":
                 model,
-                [
-                    {
-                        "role":
-                            "system",
 
-                        "content":
-                            "You are a model "
-                            "health check. "
-                            "Reply with exactly OK.",
-                    },
+            "answer":
+                answer,
 
-                    {
-                        "role":
-                            "user",
+            "input_tokens":
+                input_tokens,
 
-                        "content":
-                            "Reply with exactly OK.",
-                    },
-                ],
-            )
-        )
-
-        return jsonify(
-            {
-                "ok":
-                    True,
-
-                "provider":
-                    provider,
-
-                "model":
-                    model,
-
-                "answer":
-                    answer,
-
-                "input_tokens":
-                    input_tokens,
-
-                "output_tokens":
-                    output_tokens,
-            }
-        )
+            "output_tokens":
+                output_tokens,
+        })
 
     except Exception as exc:
-        return jsonify(
-            {
-                "ok":
-                    False,
 
-                "provider":
-                    provider,
+        return jsonify({
+            "ok":
+                False,
 
-                "model":
-                    model,
+            "provider":
+                provider,
 
-                "error":
-                    str(exc),
-            }
-        ), 502
+            "model":
+                model,
+
+            "error":
+                str(exc),
+        }), 502
 
 
 # ============================================================
@@ -2565,14 +3082,11 @@ def stripe_request(
         method,
         "https://api.stripe.com/v1"
         + path,
-
         auth=(
             STRIPE_SECRET_KEY,
             "",
         ),
-
         data=data or {},
-
         timeout=60,
     )
 
@@ -2585,11 +3099,9 @@ def stripe_request(
     return response.json()
 
 
-@app.post(
-    "/api/upgrade"
-)
+@app.post("/api/upgrade")
 def upgrade():
-    uid = get_user_id()
+    user_id = get_user_id()
 
     body = (
         request.get_json(
@@ -2607,88 +3119,77 @@ def upgrade():
         "all_ai",
         "ultra",
     ):
-        return jsonify(
-            {
-                "error":
-                    "Invalid paid plan."
-            }
-        ), 400
+
+        return jsonify({
+            "error":
+                "Invalid paid plan.",
+        }), 400
 
     if not STRIPE_SECRET_KEY:
-        return jsonify(
-            {
-                "configured":
-                    False,
 
-                "message":
-                    "Stripe is not configured yet.",
+        return jsonify({
+            "configured":
+                False,
 
-                "plan":
-                    plan,
-            }
-        )
+            "message":
+                "Stripe is not configured yet.",
 
-    plan_info = PLANS[
+            "plan":
+                plan,
+        })
+
+    info = PLANS[
         plan
     ]
-
-    data = {
-        "mode":
-            "subscription",
-
-        "success_url":
-            PUBLIC_BASE_URL
-            + "/?payment=success",
-
-        "cancel_url":
-            PUBLIC_BASE_URL
-            + "/?payment=cancelled",
-
-        "line_items[0][price_data][currency]":
-            "inr",
-
-        "line_items[0][price_data][unit_amount]":
-            str(
-                plan_info[
-                    "price_inr"
-                ] * 100
-            ),
-
-        "line_items[0][price_data][product_data][name]":
-            plan_info[
-                "name"
-            ],
-
-        "line_items[0][price_data][recurring][interval]":
-            "month",
-
-        "line_items[0][quantity]":
-            "1",
-
-        "metadata[user_id]":
-            uid,
-
-        "metadata[plan]":
-            plan,
-    }
 
     session = stripe_request(
         "POST",
         "/checkout/sessions",
-        data,
-    )
-
-    return jsonify(
         {
-            "configured":
-                True,
+            "mode":
+                "subscription",
 
-            "checkout_url":
-                session.get(
-                    "url"
+            "success_url":
+                PUBLIC_BASE_URL
+                + "/?payment=success",
+
+            "cancel_url":
+                PUBLIC_BASE_URL
+                + "/?payment=cancelled",
+
+            "line_items[0][price_data][currency]":
+                "inr",
+
+            "line_items[0][price_data][unit_amount]":
+                str(
+                    info["price_inr"]
+                    * 100
                 ),
-        }
+
+            "line_items[0][price_data][product_data][name]":
+                info["name"],
+
+            "line_items[0][price_data][recurring][interval]":
+                "month",
+
+            "line_items[0][quantity]":
+                "1",
+
+            "metadata[user_id]":
+                user_id,
+
+            "metadata[plan]":
+                plan,
+        },
     )
+
+    return jsonify({
+        "configured":
+            True,
+
+        "checkout_url":
+            session.get("url"),
+    })
 
 
 # ============================================================
@@ -2702,34 +3203,32 @@ def verify_stripe_signature(
     if not STRIPE_WEBHOOK_SECRET:
         return False
 
-    parts = {}
+    timestamp = None
+    signatures = []
 
-    for item in signature.split(","):
-        if "=" in item:
-            key, value = item.split(
-                "=",
-                1,
+    for part in signature.split(","):
+
+        if "=" not in part:
+            continue
+
+        key, value = part.split(
+            "=",
+            1,
+        )
+
+        if key == "t":
+            timestamp = value
+
+        elif key == "v1":
+            signatures.append(
+                value
             )
 
-            parts.setdefault(
-                key,
-                [],
-            ).append(value)
-
-    timestamps = parts.get(
-        "t",
-        [],
-    )
-
-    signatures = parts.get(
-        "v1",
-        [],
-    )
-
-    if not timestamps or not signatures:
+    if (
+        not timestamp
+        or not signatures
+    ):
         return False
-
-    timestamp = timestamps[0]
 
     try:
         timestamp_int = int(
@@ -2738,10 +3237,13 @@ def verify_stripe_signature(
     except ValueError:
         return False
 
-    if abs(
-        time.time()
-        - timestamp_int
-    ) > 300:
+    if (
+        abs(
+            time.time()
+            - timestamp_int
+        )
+        > 300
+    ):
         return False
 
     signed_payload = (
@@ -2761,15 +3263,14 @@ def verify_stripe_signature(
     return any(
         hmac.compare_digest(
             expected,
-            value,
+            signature_value,
         )
-        for value in signatures
+        for signature_value
+        in signatures
     )
 
 
-@app.post(
-    "/api/stripe/webhook"
-)
+@app.post("/api/stripe/webhook")
 def stripe_webhook():
     payload = request.get_data()
 
@@ -2814,7 +3315,7 @@ def stripe_webhook():
         {},
     )
 
-    uid = metadata.get(
+    user_id = metadata.get(
         "user_id"
     )
 
@@ -2823,18 +3324,18 @@ def stripe_webhook():
     )
 
     if (
-        uid
+        user_id
         and plan in PLANS
-        and plan != "free"
         and event_type in (
             "checkout.session.completed",
             "customer.subscription.created",
             "customer.subscription.updated",
         )
     ):
-        conn = db()
 
-        conn.execute(
+        connection = db()
+
+        connection.execute(
             """
             UPDATE users
             SET
@@ -2845,39 +3346,33 @@ def stripe_webhook():
             """,
             (
                 plan,
-
                 obj.get(
                     "customer"
                 ),
-
                 obj.get(
                     "subscription"
-                ),
-
-                uid,
+                )
+                or obj.get("id"),
+                user_id,
             ),
         )
 
-        conn.commit()
-        conn.close()
+        connection.commit()
+        connection.close()
 
-    return jsonify(
-        {
-            "received":
-                True
-        }
-    )
+    return jsonify({
+        "received":
+            True
+    })
 
 
 # ============================================================
 # FRONTEND
 # ============================================================
 
-HTML = r"""
+HTML = """
 <!doctype html>
-
 <html>
-
 <head>
 
 <meta charset="utf-8">
@@ -2889,261 +3384,244 @@ HTML = r"""
 
 <style>
 
-* {
-    box-sizing: border-box;
+*{
+    box-sizing:border-box;
 }
 
-body {
-    margin: 0;
+body{
+    margin:0;
     font-family:
-        Inter,
         system-ui,
         -apple-system,
         BlinkMacSystemFont,
         "Segoe UI",
         sans-serif;
 
-    background: #ffffff;
-    color: #171717;
+    background:#fff;
+    color:#171717;
 }
 
 button,
 textarea,
-input,
-select {
-    font: inherit;
+select{
+    font:inherit;
 }
 
-button {
-    cursor: pointer;
+button{
+    cursor:pointer;
 }
 
-#app {
-    height: 100vh;
-    display: flex;
-    overflow: hidden;
+#app{
+    height:100vh;
+    display:flex;
+    overflow:hidden;
 }
 
-#sidebar {
-    position: fixed;
-    left: 0;
-    top: 0;
-    bottom: 0;
+#sidebar{
+    position:fixed;
 
-    width: 285px;
+    inset:0 auto 0 0;
 
-    background: #f7f7f8;
+    width:290px;
 
-    border-right:
-        1px solid #e7e7e7;
+    background:#f7f7f8;
 
-    transform:
-        translateX(-100%);
+    border-right:1px solid #e5e5e5;
 
-    transition:
-        transform .22s ease;
+    transform:translateX(-100%);
 
-    z-index: 30;
+    transition:.2s;
 
-    display: flex;
-    flex-direction: column;
+    z-index:30;
+
+    display:flex;
+
+    flex-direction:column;
 }
 
-#sidebar.open {
-    transform:
-        translateX(0);
+#sidebar.open{
+    transform:translateX(0);
 }
 
-.sidebar-top {
-    padding: 18px;
-}
+#overlay{
+    position:fixed;
 
-.new-chat {
-    width: 100%;
-
-    border:
-        1px solid #ddd;
-
-    background: white;
-
-    border-radius: 12px;
-
-    padding: 12px;
-
-    text-align: left;
-}
-
-.history {
-    flex: 1;
-
-    overflow-y: auto;
-
-    padding: 10px;
-}
-
-.history-item {
-    padding: 11px 12px;
-
-    border-radius: 9px;
-
-    cursor: pointer;
-
-    white-space: nowrap;
-
-    overflow: hidden;
-
-    text-overflow: ellipsis;
-}
-
-.history-item:hover {
-    background: #ececef;
-}
-
-.sidebar-bottom {
-    padding: 14px;
-
-    border-top:
-        1px solid #e3e3e3;
-}
-
-#overlay {
-    position: fixed;
-
-    inset: 0;
+    inset:0;
 
     background:
-        rgba(0,0,0,.22);
+        rgba(0,0,0,.20);
 
-    display: none;
+    display:none;
 
-    z-index: 20;
+    z-index:20;
 }
 
-#overlay.show {
-    display: block;
+#overlay.show{
+    display:block;
 }
 
-#main {
-    width: 100%;
-
-    height: 100vh;
-
-    display: flex;
-
-    flex-direction: column;
+.sidebar-top{
+    padding:18px;
 }
 
-.topbar {
-    height: 68px;
+.new-chat{
+    width:100%;
 
-    display: flex;
+    padding:12px;
 
-    align-items: center;
+    border:1px solid #ddd;
 
-    gap: 12px;
+    border-radius:12px;
 
-    padding: 10px 18px;
-
-    border-bottom:
-        1px solid #eee;
-
-    background:
-        rgba(255,255,255,.94);
+    background:#fff;
 }
 
-.icon-btn {
-    width: 42px;
+.history{
+    flex:1;
 
-    height: 42px;
+    overflow:auto;
 
-    border: none;
-
-    background:
-        transparent;
-
-    border-radius: 10px;
-
-    font-size: 24px;
+    padding:10px;
 }
 
-.icon-btn:hover {
-    background: #f1f1f1;
+.history-item{
+    padding:11px;
+
+    border-radius:9px;
+
+    white-space:nowrap;
+
+    overflow:hidden;
+
+    text-overflow:ellipsis;
 }
 
-.brand {
-    font-weight: 700;
-
-    font-size: 20px;
+.history-item:hover{
+    background:#ececef;
 }
 
-.spacer {
-    flex: 1;
+.sidebar-bottom{
+    padding:15px;
+
+    border-top:1px solid #ddd;
 }
 
-.upgrade {
-    border: none;
+#main{
+    width:100%;
 
-    background: #9bd0ff;
+    height:100vh;
+
+    display:flex;
+
+    flex-direction:column;
+}
+
+.topbar{
+    height:68px;
+
+    display:flex;
+
+    align-items:center;
+
+    gap:12px;
+
+    padding:10px 18px;
+
+    border-bottom:1px solid #eee;
+}
+
+.icon{
+    border:0;
+
+    background:transparent;
+
+    font-size:25px;
+
+    width:42px;
+
+    height:42px;
+
+    border-radius:10px;
+}
+
+.icon:hover{
+    background:#f2f2f2;
+}
+
+.brand{
+    font-size:20px;
+
+    font-weight:700;
+}
+
+.spacer{
+    flex:1;
+}
+
+.upgrade{
+    border:0;
+
+    background:#9bd0ff;
+
+    border-radius:22px;
+
+    padding:10px 19px;
+
+    font-weight:700;
+}
+
+.chat{
+    flex:1;
+
+    overflow:auto;
 
     padding:
-        10px 19px;
-
-    border-radius: 22px;
-
-    font-weight: 700;
+        28px
+        18px
+        150px;
 }
 
-.chat-area {
-    flex: 1;
-
-    overflow-y: auto;
-
-    padding:
-        28px 18px 150px;
-}
-
-.message {
-    max-width: 850px;
+.message{
+    max-width:850px;
 
     margin:
         0 auto 20px;
 
-    line-height: 1.65;
+    line-height:1.65;
 }
 
-.user-message {
-    background: #f4f4f4;
+.user{
+    background:#f3f3f3;
 
-    padding:
-        13px 16px;
+    padding:13px 16px;
 
-    border-radius: 18px;
+    border-radius:18px;
 
-    margin-left: auto;
+    max-width:700px;
 
-    max-width: 700px;
+    margin-left:auto;
 }
 
-.assistant-message {
-    padding: 4px 0;
+.assistant{
+    padding:4px 0;
 }
 
-.model-tag {
-    font-size: 12px;
+.tag{
+    color:#777;
 
-    color: #777;
+    font-size:12px;
 
-    margin-bottom: 5px;
+    margin-bottom:5px;
 }
 
-.composer-wrap {
-    position: fixed;
+.composer-wrap{
+    position:fixed;
 
-    left: 0;
-    right: 0;
-    bottom: 0;
+    left:0;
+    right:0;
+    bottom:0;
 
-    padding: 15px;
+    padding:15px;
 
     background:
         linear-gradient(
@@ -3152,221 +3630,185 @@ button {
         );
 }
 
-.composer {
-    max-width: 850px;
+.composer{
+    max-width:850px;
 
-    margin: auto;
+    margin:auto;
 
-    background: white;
+    border:1px solid #d8d8d8;
 
-    border:
-        1px solid #d9d9d9;
+    border-radius:24px;
 
-    border-radius: 24px;
+    padding:9px;
 
-    padding: 9px;
-
-    box-shadow:
-        0 5px 25px
-        rgba(0,0,0,.07);
+    background:#fff;
 }
 
-.composer-row {
-    display: flex;
+.row{
+    display:flex;
 
-    align-items: flex-end;
+    gap:8px;
 
-    gap: 8px;
+    align-items:flex-end;
 }
 
-.plus {
-    width: 42px;
+.plus{
+    width:42px;
 
-    height: 42px;
+    height:42px;
 
-    border: none;
+    border:0;
 
-    background:
-        transparent;
+    background:transparent;
 
-    font-size: 27px;
+    font-size:27px;
 
-    border-radius: 50%;
+    border-radius:50%;
 }
 
-.plus:hover {
-    background: #f1f1f1;
+.send{
+    width:42px;
+
+    height:42px;
+
+    border:0;
+
+    border-radius:50%;
+
+    background:#111;
+
+    color:white;
 }
 
-textarea {
-    flex: 1;
+textarea{
+    flex:1;
 
-    border: none;
+    border:0;
 
-    outline: none;
+    outline:0;
 
-    resize: none;
+    resize:none;
 
-    min-height: 42px;
+    min-height:42px;
 
-    max-height: 150px;
+    max-height:150px;
 
-    padding:
-        11px 5px;
+    padding:11px 5px;
 }
 
-.send {
-    width: 42px;
+.picker{
+    display:none;
 
-    height: 42px;
-
-    border-radius: 50%;
-
-    border: none;
-
-    background: #111;
-
-    color: white;
-}
-
-.model-picker {
-    display: none;
-
-    padding: 10px;
-
-    border-top:
+    border-bottom:
         1px solid #eee;
+
+    padding:10px;
 }
 
-.model-picker.open {
-    display: block;
+.picker.open{
+    display:block;
 }
 
-.model-select {
-    width: 100%;
+select{
+    width:100%;
+
+    padding:10px;
 
     border:
         1px solid #ddd;
 
-    border-radius: 12px;
-
-    padding: 10px;
+    border-radius:12px;
 }
 
-.modal {
-    position: fixed;
+.modal{
+    position:fixed;
 
-    inset: 0;
+    inset:0;
 
     background:
         rgba(0,0,0,.45);
 
-    display: none;
+    display:none;
 
-    align-items: center;
+    align-items:center;
 
-    justify-content: center;
+    justify-content:center;
 
-    z-index: 100;
+    padding:20px;
 
-    padding: 20px;
+    z-index:100;
 }
 
-.modal.show {
-    display: flex;
+.modal.show{
+    display:flex;
 }
 
-.modal-box {
-    width:
-        min(1050px, 100%);
+.modal-box{
+    width:min(1000px,100%);
 
-    max-height: 90vh;
+    background:#fff;
 
-    overflow-y: auto;
+    border-radius:22px;
 
-    background: white;
+    padding:24px;
 
-    border-radius: 24px;
+    max-height:90vh;
 
-    padding: 24px;
+    overflow:auto;
 }
 
-.close {
-    float: right;
+.close{
+    float:right;
 
-    border: none;
+    border:0;
 
-    background:
-        transparent;
+    background:transparent;
 
-    font-size: 25px;
+    font-size:25px;
 }
 
-.plans {
-    display: grid;
+.plans{
+    display:grid;
 
     grid-template-columns:
-        repeat(3, 1fr);
+        repeat(3,1fr);
 
-    gap: 15px;
-
-    margin-top: 25px;
+    gap:15px;
 }
 
-.plan {
+.plan{
     border:
         1px solid #ddd;
 
-    border-radius: 18px;
+    border-radius:18px;
 
-    padding: 20px;
+    padding:20px;
 }
 
-.plan.recommended {
-    border:
-        2px solid #111;
+.plan button{
+    width:100%;
+
+    border:0;
+
+    background:#111;
+
+    color:white;
+
+    border-radius:12px;
+
+    padding:12px;
 }
 
-.plan h3 {
-    margin-top: 0;
+.price{
+    font-size:30px;
+
+    font-weight:800;
 }
 
-.price {
-    font-size: 30px;
+@media(max-width:700px){
 
-    font-weight: 800;
-
-    margin: 12px 0;
-}
-
-.plan button {
-    width: 100%;
-
-    border: none;
-
-    border-radius: 12px;
-
-    padding: 12px;
-
-    background: #111;
-
-    color: white;
-}
-
-@media(max-width:700px) {
-
-    .plans {
-        grid-template-columns:
-            1fr;
-    }
-
-    .brand {
-        font-size: 18px;
-    }
-
-    .upgrade {
-        padding:
-            9px 13px;
+    .plans{
+        grid-template-columns:1fr;
     }
 }
 
@@ -3382,9 +3824,8 @@ textarea {
 
 <div class="sidebar-top">
 
-<button
-    class="new-chat"
-    onclick="newChat()">
+<button class="new-chat"
+        onclick="newChat()">
 
 ＋ New chat
 
@@ -3392,9 +3833,8 @@ textarea {
 
 </div>
 
-<div
-    id="history"
-    class="history">
+<div id="history"
+     class="history">
 </div>
 
 <div class="sidebar-bottom">
@@ -3407,20 +3847,16 @@ Free plan
 
 </aside>
 
-
-<div
-    id="overlay"
-    onclick="toggleSidebar()">
+<div id="overlay"
+     onclick="toggleSidebar()">
 </div>
-
 
 <main id="main">
 
 <header class="topbar">
 
-<button
-    class="icon-btn"
-    onclick="toggleSidebar()">
+<button class="icon"
+        onclick="toggleSidebar()">
 
 ☰
 
@@ -3430,11 +3866,11 @@ Free plan
 Veya
 </div>
 
-<div class="spacer"></div>
+<div class="spacer">
+</div>
 
-<button
-    class="upgrade"
-    onclick="openUpgrade()">
+<button class="upgrade"
+        onclick="openUpgrade()">
 
 Upgrade
 
@@ -3442,39 +3878,30 @@ Upgrade
 
 </header>
 
-
-<section
-    id="chat"
-    class="chat-area">
+<section id="chat"
+         class="chat">
 </section>
-
 
 <div class="composer-wrap">
 
 <div class="composer">
 
-<div
-    id="modelPicker"
-    class="model-picker">
+<div id="picker"
+     class="picker">
 
-<select
-    id="modelSelect"
-    class="model-select">
+<select id="modelSelect">
 </select>
 
 </div>
 
+<div class="row">
 
-<div class="composer-row">
-
-<button
-    class="plus"
-    onclick="toggleModelPicker()">
+<button class="plus"
+        onclick="togglePicker()">
 
 +
 
 </button>
-
 
 <textarea
     id="input"
@@ -3482,10 +3909,8 @@ Upgrade
     onkeydown="handleKey(event)">
 </textarea>
 
-
-<button
-    class="send"
-    onclick="sendMessage()">
+<button class="send"
+        onclick="sendMessage()">
 
 ↑
 
@@ -3502,40 +3927,28 @@ Upgrade
 </div>
 
 
-<div
-    id="upgradeModal"
-    class="modal">
+<div id="upgradeModal"
+     class="modal">
 
 <div class="modal-box">
 
-<button
-    class="close"
-    onclick="closeUpgrade()">
+<button class="close"
+        onclick="closeUpgrade()">
 
 ×
 
 </button>
 
-<h2>
-Upgrade Veya
-</h2>
-
-<p>
-Choose the amount of model access you need.
-</p>
-
+<h2>Upgrade Veya</h2>
 
 <div class="plans">
 
 <div class="plan">
 
-<h3>
-Veya Core
-</h3>
+<h3>Veya Core</h3>
 
 <div class="price">
-₹199
-<small>/mo</small>
+₹199/mo
 </div>
 
 <p>
@@ -3543,43 +3956,11 @@ OpenAI + Google + Anthropic
 </p>
 
 <p>
-Model selector included
+Live model selection
 </p>
 
-<button
-    onclick="upgrade('core')">
-
+<button onclick="upgrade('core')">
 Choose Core
-
-</button>
-
-</div>
-
-
-<div class="plan recommended">
-
-<h3>
-Veya All AI
-</h3>
-
-<div class="price">
-₹599
-<small>/mo</small>
-</div>
-
-<p>
-All configured providers
-</p>
-
-<p>
-Advanced model selection
-</p>
-
-<button
-    onclick="upgrade('all_ai')">
-
-Choose All AI
-
 </button>
 
 </div>
@@ -3587,28 +3968,49 @@ Choose All AI
 
 <div class="plan">
 
-<h3>
-Veya Ultra
-</h3>
+<h3>Veya All AI</h3>
 
 <div class="price">
-₹1,499
-<small>/mo</small>
+₹599/mo
 </div>
 
 <p>
-Frontier/top configured models
+All configured AI providers
 </p>
 
 <p>
-Highest usage limits
+Up to 5 premium model/agent slots per provider
 </p>
 
-<button
-    onclick="upgrade('ultra')">
+<button onclick="upgrade('all_ai')">
+Choose All AI
+</button>
 
+</div>
+
+
+<div class="plan">
+
+<h3>Veya Ultra</h3>
+
+<div class="price">
+₹1,499/mo
+</div>
+
+<p>
+All configured AI providers
+</p>
+
+<p>
+Up to 5 premium model/agent slots per provider
+</p>
+
+<p>
+Highest Veya usage limit
+</p>
+
+<button onclick="upgrade('ultra')">
 Choose Ultra
-
 </button>
 
 </div>
@@ -3623,14 +4025,16 @@ Choose Ultra
 <script>
 
 let currentChat = null;
+
 let currentPlan = "free";
+
 let models = [];
 
 
 async function api(
     url,
-    options = {}
-) {
+    options={}
+){
 
     const response =
         await fetch(
@@ -3641,7 +4045,7 @@ async function api(
 
                 ...options,
 
-                headers: {
+                headers:{
                     "Content-Type":
                         "application/json",
 
@@ -3653,11 +4057,11 @@ async function api(
     const data =
         await response.json();
 
-    if (!response.ok) {
+    if(!response.ok){
 
         throw new Error(
-            data.error
-            || "Request failed"
+            data.error ||
+            "Request failed"
         );
     }
 
@@ -3665,7 +4069,7 @@ async function api(
 }
 
 
-function toggleSidebar() {
+function toggleSidebar(){
 
     const sidebar =
         document.getElementById(
@@ -3690,7 +4094,7 @@ function toggleSidebar() {
 }
 
 
-function openUpgrade() {
+function openUpgrade(){
 
     document
         .getElementById(
@@ -3702,7 +4106,7 @@ function openUpgrade() {
 }
 
 
-function closeUpgrade() {
+function closeUpgrade(){
 
     document
         .getElementById(
@@ -3714,7 +4118,7 @@ function closeUpgrade() {
 }
 
 
-async function loadMe() {
+async function loadMe(){
 
     const data =
         await api(
@@ -3735,7 +4139,7 @@ async function loadMe() {
 }
 
 
-async function loadModels() {
+async function loadModels(){
 
     const data =
         await api(
@@ -3745,11 +4149,6 @@ async function loadModels() {
     models =
         data.models || [];
 
-    const picker =
-        document.getElementById(
-            "modelPicker"
-        );
-
     const select =
         document.getElementById(
             "modelSelect"
@@ -3757,16 +4156,11 @@ async function loadModels() {
 
     select.innerHTML = "";
 
-    if (!data.model_picker) {
-
-        picker.classList.remove(
-            "open"
-        );
-
+    if(!data.model_picker){
         return;
     }
 
-    if (!models.length) {
+    if(!models.length){
 
         const option =
             document.createElement(
@@ -3774,7 +4168,7 @@ async function loadModels() {
             );
 
         option.textContent =
-            "No configured models";
+            "No live premium models configured";
 
         select.appendChild(
             option
@@ -3783,10 +4177,10 @@ async function loadModels() {
         return;
     }
 
-    for (
+    for(
         const item
         of models
-    ) {
+    ){
 
         const option =
             document.createElement(
@@ -3805,6 +4199,8 @@ async function loadModels() {
         option.textContent =
             item.provider.toUpperCase()
             + " — "
+            + item.agent_name
+            + " — "
             + item.model;
 
         select.appendChild(
@@ -3814,12 +4210,11 @@ async function loadModels() {
 }
 
 
-function toggleModelPicker() {
+function togglePicker(){
 
-    if (
-        currentPlan ===
-        "free"
-    ) {
+    if(
+        currentPlan === "free"
+    ){
 
         openUpgrade();
 
@@ -3828,7 +4223,7 @@ function toggleModelPicker() {
 
     document
         .getElementById(
-            "modelPicker"
+            "picker"
         )
         .classList.toggle(
             "open"
@@ -3836,7 +4231,7 @@ function toggleModelPicker() {
 }
 
 
-async function loadHistory() {
+async function loadHistory(){
 
     const data =
         await api(
@@ -3850,10 +4245,10 @@ async function loadHistory() {
 
     history.innerHTML = "";
 
-    for (
+    for(
         const item
         of data
-    ) {
+    ){
 
         const div =
             document.createElement(
@@ -3878,7 +4273,7 @@ async function loadHistory() {
 }
 
 
-async function newChat() {
+async function newChat(){
 
     const data =
         await api(
@@ -3899,20 +4294,15 @@ async function newChat() {
         .innerHTML = "";
 
     await loadHistory();
-
-    if (
-        window.innerWidth < 700
-    ) {
-        toggleSidebar();
-    }
 }
 
 
 async function openChat(
     id
-) {
+){
 
-    currentChat = id;
+    currentChat =
+        id;
 
     const data =
         await api(
@@ -3927,23 +4317,18 @@ async function openChat(
 
     chat.innerHTML = "";
 
-    for (
+    for(
         const message
         of data.messages
-    ) {
+    ){
 
         addMessage(
             message.role,
             message.content,
             message.provider,
-            message.model
+            message.model,
+            message.agent_role
         );
-    }
-
-    if (
-        window.innerWidth < 700
-    ) {
-        toggleSidebar();
     }
 }
 
@@ -3952,8 +4337,9 @@ function addMessage(
     role,
     content,
     provider,
-    model
-) {
+    model,
+    agent
+){
 
     const chat =
         document.getElementById(
@@ -3967,17 +4353,18 @@ function addMessage(
 
     wrapper.className =
         "message "
-        + (
+        +
+        (
             role === "user"
-            ? "user-message"
-            : "assistant-message"
+            ? "user"
+            : "assistant"
         );
 
-    if (
+    if(
         role === "assistant"
         && provider
         && model
-    ) {
+    ){
 
         const tag =
             document.createElement(
@@ -3985,12 +4372,18 @@ function addMessage(
             );
 
         tag.className =
-            "model-tag";
+            "tag";
 
         tag.textContent =
             provider.toUpperCase()
             + " · "
-            + model;
+            + model
+            + (
+                agent
+                ? " · "
+                + agent
+                : ""
+            );
 
         wrapper.appendChild(
             tag
@@ -4020,12 +4413,12 @@ function addMessage(
 
 function handleKey(
     event
-) {
+){
 
-    if (
+    if(
         event.key === "Enter"
         && !event.shiftKey
-    ) {
+    ){
 
         event.preventDefault();
 
@@ -4034,7 +4427,7 @@ function handleKey(
 }
 
 
-async function sendMessage() {
+async function sendMessage(){
 
     const input =
         document.getElementById(
@@ -4044,7 +4437,7 @@ async function sendMessage() {
     const text =
         input.value.trim();
 
-    if (!text) {
+    if(!text){
         return;
     }
 
@@ -4057,12 +4450,12 @@ async function sendMessage() {
 
     let selected = null;
 
-    if (
+    if(
         currentPlan !== "free"
         && models.length
-    ) {
+    ){
 
-        try {
+        try{
 
             selected =
                 JSON.parse(
@@ -4073,12 +4466,13 @@ async function sendMessage() {
                         .value
                 );
 
-        } catch (
-            error
-        ) {}
+        }catch(error){
+
+            selected = null;
+        }
     }
 
-    try {
+    try{
 
         const data =
             await api(
@@ -4088,28 +4482,24 @@ async function sendMessage() {
                         "POST",
 
                     body:
-                        JSON.stringify(
-                            {
-                                chat_id:
-                                    currentChat,
+                        JSON.stringify({
 
-                                message:
-                                    text,
+                            chat_id:
+                                currentChat,
 
-                                provider:
-                                    selected
-                                    ? selected.provider
-                                    : null,
+                            message:
+                                text,
 
-                                model:
-                                    selected
-                                    ? selected.model
-                                    : null,
+                            provider:
+                                selected
+                                ? selected.provider
+                                : null,
 
-                                style:
-                                    "balanced"
-                            }
-                        )
+                            model:
+                                selected
+                                ? selected.model
+                                : null
+                        })
                 }
             );
 
@@ -4120,14 +4510,13 @@ async function sendMessage() {
             "assistant",
             data.answer,
             data.provider,
-            data.model
+            data.model,
+            data.agent
         );
 
         await loadHistory();
 
-    } catch (
-        error
-    ) {
+    }catch(error){
 
         addMessage(
             "assistant",
@@ -4140,9 +4529,9 @@ async function sendMessage() {
 
 async function upgrade(
     plan
-) {
+){
 
-    try {
+    try{
 
         const data =
             await api(
@@ -4159,10 +4548,10 @@ async function upgrade(
                 }
             );
 
-        if (
+        if(
             data.configured
             && data.checkout_url
-        ) {
+        ){
 
             window.location.href =
                 data.checkout_url;
@@ -4172,12 +4561,11 @@ async function upgrade(
 
         alert(
             data.message
-            || "Payment is not configured yet."
+            ||
+            "Stripe is not configured yet."
         );
 
-    } catch (
-        error
-    ) {
+    }catch(error){
 
         alert(
             error.message
@@ -4186,17 +4574,15 @@ async function upgrade(
 }
 
 
-async function boot() {
+async function boot(){
 
-    try {
+    try{
 
         await loadMe();
 
         await loadHistory();
 
-    } catch (
-        error
-    ) {
+    }catch(error){
 
         addMessage(
             "assistant",
@@ -4212,7 +4598,6 @@ boot();
 </script>
 
 </body>
-
 </html>
 """
 
@@ -4223,7 +4608,9 @@ boot();
 
 @app.get("/")
 def home():
-    uid = get_user_id()
+
+    user_id =
+        get_user_id()
 
     response = make_response(
         render_template_string(
@@ -4233,7 +4620,7 @@ def home():
 
     response.set_cookie(
         "veya_user",
-        uid,
+        user_id,
         httponly=True,
         samesite="Lax",
     )
@@ -4249,6 +4636,7 @@ init_db()
 
 
 if __name__ == "__main__":
+
     app.run(
         host="0.0.0.0",
         port=PORT,
